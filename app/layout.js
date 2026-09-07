@@ -8,9 +8,9 @@ const roboto = Roboto({
 })
 
 export const metadata = {
-  title: 'PhotoFlow – Làm nét & tối ưu ảnh social',
+  title: 'PhotoFlow – Làm nét & tối ưu hình ảnh',
   description:
-    'Công cụ tối ưu hình ảnh, upscale và xử lý ảnh trực tiếp trên trình duyệt.',
+    'AI Upscale, Natural Photo và Social Preset trực tiếp trên trình duyệt.',
 }
 
 export default function RootLayout({ children }) {
