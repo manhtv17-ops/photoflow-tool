@@ -1,15 +1,19 @@
 {
   "name": "photoflow-tool",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "scripts": {
+    "dev": "next dev",
     "build": "next build",
     "start": "next start"
   },
   "dependencies": {
+    "@tensorflow/tfjs": "^4.22.0",
+    "@upscalerjs/esrgan-slim": "^1.0.0",
     "next": "^15.5.7",
+    "pica": "^10.0.3",
     "react": "19.1.0",
     "react-dom": "19.1.0",
-    "lucide-react": "0.468.0"
+    "upscaler": "^1.0.0"
   }
 }
