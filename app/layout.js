@@ -1,14 +1,22 @@
-import './globals.css';
+import './globals.css'
+import { Roboto } from 'next/font/google'
+
+const roboto = Roboto({
+  subsets: ['latin', 'vietnamese'],
+  weight: ['400', '500', '700'],
+  display: 'swap',
+})
 
 export const metadata = {
   title: 'PhotoFlow – Làm nét & tối ưu ảnh social',
-  description: 'Công cụ xử lý ảnh trực tiếp trên trình duyệt: làm nét, upscale, resize social và xuất ảnh.'
-};
+}
 
 export default function RootLayout({ children }) {
   return (
     <html lang="vi">
-      <body>{children}</body>
+      <body className={roboto.className}>
+        {children}
+      </body>
     </html>
-  );
+  )
 }
