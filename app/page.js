@@ -1,230 +1,522 @@
-'use client';
+'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  UploadCloud, ShieldCheck, Sparkles, Download, Image as ImageIcon,
-  ScanLine, SlidersHorizontal, Smartphone, MonitorSmartphone, CheckCircle2,
-  Info, LockKeyhole, RotateCcw, WandSparkles
-} from 'lucide-react';
-
-const presets = {
-  none: { label: 'Giữ nguyên', w: null, h: null },
-  fbpost: { label: 'Facebook Post', w: 1080, h: 1350 },
-  fbsquare: { label: 'Facebook Ads', w: 1080, h: 1080 },
-  story: { label: 'Story / TikTok', w: 1080, h: 1920 },
-  web: { label: 'Website', w: 1600, h: 900 },
-};
+import { useRef, useState } from 'react'
 
 export default function Home() {
-  const inputRef = useRef(null);
-  const canvasRef = useRef(null);
-  const [file, setFile] = useState(null);
-  const [sourceUrl, setSourceUrl] = useState('');
-  const [resultUrl, setResultUrl] = useState('');
-  const [scale, setScale] = useState(2);
-  const [natural, setNatural] = useState(true);
-  const [preset, setPreset] = useState('none');
-  const [quality, setQuality] = useState(0.92);
-  const [position, setPosition] = useState(50);
-  const [busy, setBusy] = useState(false);
-  const [dims, setDims] = useState(null);
+  const inputRef = useRef(null)
+  const canvasRef = useRef(null)
 
-  const outDims = useMemo(() => {
-    if (!dims) return null;
-    const p = presets[preset];
-    if (p.w && p.h) return { w: p.w, h: p.h };
-    return { w: Math.round(dims.w * scale), h: Math.round(dims.h * scale) };
-  }, [dims, preset, scale]);
+  const [file, setFile] = useState(null)
+  const [src, setSrc] = useState('')
+  const [output, setOutput] = useState('')
+  const [scale, setScale] = useState(2)
+  const [quality, setQuality] = useState(92)
+  const [preset, setPreset] = useState('original')
+  const [slider, setSlider] = useState(50)
+  const [processing, setProcessing] = useState(false)
 
-  useEffect(() => () => {
-    if (sourceUrl) URL.revokeObjectURL(sourceUrl);
-  }, [sourceUrl]);
+  function handleFile(f) {
+    if (!f || !f.type.startsWith('image/')) return
 
-  function onFile(f) {
-    if (!f || !f.type.startsWith('image/')) return;
-    if (sourceUrl) URL.revokeObjectURL(sourceUrl);
-    const url = URL.createObjectURL(f);
-    setFile(f);
-    setSourceUrl(url);
-    setResultUrl('');
-    const img = new Image();
-    img.onload = () => setDims({ w: img.naturalWidth, h: img.naturalHeight });
-    img.src = url;
+    if (src) URL.revokeObjectURL(src)
+    if (output) URL.revokeObjectURL(output)
+
+    setFile(f)
+    setSrc(URL.createObjectURL(f))
+    setOutput('')
   }
 
   function handleDrop(e) {
-    e.preventDefault();
-    onFile(e.dataTransfer.files?.[0]);
+    e.preventDefault()
+    handleFile(e.dataTransfer.files?.[0])
   }
 
   async function processImage() {
-    if (!sourceUrl) return;
-    setBusy(true);
+    if (!src) return
+
+    setProcessing(true)
+
     try {
-      const img = new Image();
-      img.src = sourceUrl;
-      await img.decode();
+      const img = new Image()
+      img.src = src
+      await img.decode()
 
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext('2d', { alpha: false });
-      const p = presets[preset];
-      const targetW = p.w || Math.round(img.naturalWidth * scale);
-      const targetH = p.h || Math.round(img.naturalHeight * scale);
-      canvas.width = targetW;
-      canvas.height = targetH;
+      let targetWidth = img.naturalWidth * scale
+      let targetHeight = img.naturalHeight * scale
 
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, targetW, targetH);
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
+      const presets = {
+        facebookPortrait: [1080, 1350],
+        facebookSquare: [1080, 1080],
+        story: [1080, 1920],
+        landscape: [1200, 628],
+      }
 
-      let sx = 0, sy = 0, sw = img.naturalWidth, sh = img.naturalHeight;
-      if (p.w && p.h) {
-        const srcRatio = sw / sh;
-        const dstRatio = targetW / targetH;
-        if (srcRatio > dstRatio) {
-          sw = Math.round(sh * dstRatio);
-          sx = Math.round((img.naturalWidth - sw) / 2);
+      if (preset !== 'original') {
+        const [w, h] = presets[preset]
+        targetWidth = w
+        targetHeight = h
+      }
+
+      const canvas = canvasRef.current
+      const ctx = canvas.getContext('2d', { alpha: false })
+
+      canvas.width = targetWidth
+      canvas.height = targetHeight
+
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, targetWidth, targetHeight)
+
+      ctx.imageSmoothingEnabled = true
+      ctx.imageSmoothingQuality = 'high'
+
+      ctx.filter = 'contrast(1.035) saturate(0.98) brightness(1.01)'
+
+      const sourceRatio = img.naturalWidth / img.naturalHeight
+      const targetRatio = targetWidth / targetHeight
+
+      let drawWidth = targetWidth
+      let drawHeight = targetHeight
+      let dx = 0
+      let dy = 0
+
+      if (preset !== 'original') {
+        if (sourceRatio > targetRatio) {
+          drawHeight = targetHeight
+          drawWidth = drawHeight * sourceRatio
+          dx = (targetWidth - drawWidth) / 2
         } else {
-          sh = Math.round(sw / dstRatio);
-          sy = Math.round((img.naturalHeight - sh) / 2);
+          drawWidth = targetWidth
+          drawHeight = drawWidth / sourceRatio
+          dy = (targetHeight - drawHeight) / 2
         }
       }
 
-      ctx.filter = natural ? 'contrast(1.025) saturate(0.99) brightness(1.01)' : 'none';
-      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, targetW, targetH);
-      ctx.filter = 'none';
+      ctx.drawImage(img, dx, dy, drawWidth, drawHeight)
 
-      if (natural) {
-        const imageData = ctx.getImageData(0, 0, targetW, targetH);
-        const d = imageData.data;
-        for (let i = 0; i < d.length; i += 4) {
-          // restrained micro-contrast/noise to avoid plasticky appearance
-          const n = (Math.random() - 0.5) * 1.2;
-          d[i] = Math.max(0, Math.min(255, d[i] + n));
-          d[i + 1] = Math.max(0, Math.min(255, d[i + 1] + n));
-          d[i + 2] = Math.max(0, Math.min(255, d[i + 2] + n));
-        }
-        ctx.putImageData(imageData, 0, 0);
-      }
+      canvas.toBlob(
+        blob => {
+          if (!blob) return
 
-      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
-      setResultUrl(URL.createObjectURL(blob));
-    } finally {
-      setBusy(false);
+          if (output) URL.revokeObjectURL(output)
+
+          setOutput(URL.createObjectURL(blob))
+          setSlider(50)
+          setProcessing(false)
+        },
+        'image/jpeg',
+        quality / 100
+      )
+    } catch (error) {
+      console.error(error)
+      setProcessing(false)
     }
   }
 
   function reset() {
-    setFile(null); setSourceUrl(''); setResultUrl(''); setDims(null); setScale(2); setPreset('none'); setPosition(50);
+    if (src) URL.revokeObjectURL(src)
+    if (output) URL.revokeObjectURL(output)
+
+    setFile(null)
+    setSrc('')
+    setOutput('')
+    setScale(2)
+    setPreset('original')
+    setSlider(50)
+
+    if (inputRef.current) inputRef.current.value = ''
   }
 
   return (
-    <main className="page-shell">
-      <section className="app-shell">
+    <main className="page">
+      <div className="appShell">
+
+        {/* HEADER */}
         <header className="topbar">
-          <div className="brand-wrap">
-            <div className="logo"><ImageIcon size={24} /></div>
+          <div className="brand">
+            <div className="brandIcon">P</div>
+
             <div>
-              <div className="brand">PhotoFlow</div>
-              <div className="tagline">Làm nét & tối ưu ảnh social</div>
-            </div>
-          </div>
-          <div className="title-wrap">
-            <h1>Làm nét & tối ưu hình ảnh</h1>
-            <p>Upscale • Natural Photo • Social Preset • Xử lý ngay trên trình duyệt</p>
-          </div>
-          <div className="privacy-pill"><ShieldCheck size={18}/><div><b>Ưu tiên quyền riêng tư</b><span>Xử lý cục bộ trên thiết bị</span></div></div>
-        </header>
-
-        <div className="grid">
-          <aside className="left-col">
-            <div className="card upload-card" onDrop={handleDrop} onDragOver={e => e.preventDefault()} onClick={() => inputRef.current?.click()}>
-              <UploadCloud size={34}/>
-              <strong>Kéo thả ảnh hoặc <span>Chạm để tải</span></strong>
-              <small>JPG, JPEG, PNG, WEBP</small>
-              <input ref={inputRef} hidden type="file" accept="image/*" onChange={e => onFile(e.target.files?.[0])}/>
-              {file && <div className="file-chip"><ImageIcon size={15}/><span>{file.name}</span><em>{(file.size/1024/1024).toFixed(1)} MB</em></div>}
-            </div>
-
-            <div className="card section-card">
-              <div className="section-title"><WandSparkles size={18}/>1. Chế độ tối ưu</div>
-              <button className={`toggle-row ${natural ? 'on' : ''}`} onClick={() => setNatural(!natural)}>
-                <div><b>Natural Photo</b><span>Giảm cảm giác quá sắc/nhựa, giữ ảnh tự nhiên hơn</span></div>
-                <div className="switch"><i/></div>
-              </button>
-              <div className="notice"><Info size={16}/>Không chỉnh sửa hoặc xóa nhãn nguồn gốc AI/C2PA. Tính năng tập trung vào chất lượng ảnh và quyền riêng tư thông thường.</div>
-            </div>
-
-            <div className="card section-card">
-              <div className="section-title"><ScanLine size={18}/>2. Làm nét ảnh</div>
-              <div className="choice-grid three">
-                {[1,2,4].map(x => <button key={x} className={scale===x ? 'selected' : ''} onClick={() => setScale(x)}><b>{x}x</b><span>{x===1?'Gốc':x===2?'Rõ nét':'Siêu nét'}</span></button>)}
+              <div className="brandName">PhotoFlow</div>
+              <div className="brandSub">
+                Image Optimizer
               </div>
             </div>
+          </div>
 
-            <div className="card section-card">
-              <div className="section-title"><MonitorSmartphone size={18}/>3. Preset social</div>
-              <select value={preset} onChange={e => setPreset(e.target.value)}>
-                {Object.entries(presets).map(([k,v]) => <option value={k} key={k}>{v.label}{v.w ? ` – ${v.w}×${v.h}` : ''}</option>)}
-              </select>
-              <div className="quality-line"><span>Chất lượng JPEG</span><b>{Math.round(quality*100)}%</b></div>
-              <input className="range" type="range" min="0.7" max="1" step="0.01" value={quality} onChange={e => setQuality(Number(e.target.value))}/>
+          <div className="headline">
+            <h1>Làm nét & tối ưu hình ảnh</h1>
+
+            <p>
+              Upscale · Natural Photo · Social Preset · xử lý trực tiếp
+              trên trình duyệt
+            </p>
+          </div>
+
+          <div className="privacyBadge">
+            <span className="shield">✓</span>
+
+            <div>
+              <strong>Ưu tiên quyền riêng tư</strong>
+              <small>Xử lý cục bộ trên thiết bị</small>
             </div>
+          </div>
+        </header>
 
-            <button className="primary" disabled={!file || busy} onClick={processImage}><Sparkles size={19}/>{busy ? 'Đang xử lý...' : 'Khởi chạy xử lý ảnh'}</button>
-          </aside>
+        {/* BODY */}
+        <div className="workspace">
 
-          <section className="right-col">
-            <div className="card status-card">
-              <div className="status-head"><div><ShieldCheck size={18}/>TRẠNG THÁI XỬ LÝ</div><span className="good">Local-first</span></div>
-              <div className="status-row"><span>Ảnh đầu vào</span><b>{dims ? `${dims.w} × ${dims.h}` : 'Chưa có ảnh'}</b></div>
-              <div className="status-row"><span>Đầu ra dự kiến</span><b>{outDims ? `${outDims.w} × ${outDims.h}` : '—'}</b></div>
-              <div className="status-row"><span>Chính sách metadata</span><b>Không giả mạo thiết bị / nguồn gốc</b></div>
-            </div>
+          {/* LEFT */}
+          <aside className="sidebar">
 
-            <div className="card preview-card">
-              {sourceUrl ? (
-                <div className="compare" style={{'--pos': `${position}%`}}>
-                  <img src={resultUrl || sourceUrl} className="after" alt="Sau xử lý"/>
-                  <div className="before-wrap"><img src={sourceUrl} alt="Trước xử lý"/></div>
-                  <span className="tag before-tag">GỐC</span>
-                  <span className="tag after-tag">{resultUrl ? 'ĐÃ XỬ LÝ' : 'PREVIEW'}</span>
-                  <input type="range" min="0" max="100" value={position} onChange={e=>setPosition(e.target.value)} aria-label="So sánh trước sau"/>
-                  <div className="divider"/><div className="handle">↔</div>
-                </div>
+            {/* UPLOAD */}
+            <div
+              className={`uploadBox ${file ? 'hasFile' : ''}`}
+              onClick={() => inputRef.current?.click()}
+              onDrop={handleDrop}
+              onDragOver={e => e.preventDefault()}
+            >
+              <input
+                ref={inputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                hidden
+                onChange={e => handleFile(e.target.files?.[0])}
+              />
+
+              {!file ? (
+                <>
+                  <div className="uploadIcon">↑</div>
+
+                  <strong>
+                    Kéo thả ảnh hoặc <span>Chạm để tải</span>
+                  </strong>
+
+                  <p>Hỗ trợ JPG, JPEG, PNG, WEBP</p>
+
+                  <button type="button" className="chooseButton">
+                    Chọn hình ảnh
+                  </button>
+                </>
               ) : (
-                <div className="empty-preview"><ImageIcon size={54}/><b>Ảnh xem trước sẽ hiển thị tại đây</b><span>Upload một ảnh để bắt đầu</span></div>
+                <>
+                  <div className="fileReadyIcon">✓</div>
+
+                  <strong>Ảnh đã sẵn sàng</strong>
+
+                  <div className="fileChip">
+                    <div className="fileThumbnail">
+                      <img src={src} alt="" />
+                    </div>
+
+                    <div className="fileInfo">
+                      <b>{file.name}</b>
+                      <small>
+                        {(file.size / 1024 / 1024).toFixed(2)} MB
+                      </small>
+                    </div>
+                  </div>
+
+                  <span className="changeFile">
+                    Nhấn để chọn ảnh khác
+                  </span>
+                </>
               )}
             </div>
 
-            <div className="result-grid">
-              <div className="card mini-card">
-                <div className="mini-title"><SlidersHorizontal size={17}/>TỐI ƯU ẢNH</div>
-                <p><CheckCircle2 size={16}/>Upscale chất lượng cao bằng canvas</p>
-                <p><CheckCircle2 size={16}/>Natural Photo nhẹ, không làm quá tay</p>
-                <p><CheckCircle2 size={16}/>Crop theo social preset</p>
-                <p><CheckCircle2 size={16}/>Xuất JPEG tối ưu dung lượng</p>
+            {/* NATURAL */}
+            <div className="panel">
+              <div className="panelTitle">
+                <span className="step">1</span>
+
+                <div>
+                  <h3>Chế độ tối ưu</h3>
+                  <p>Cân chỉnh ảnh tự nhiên hơn</p>
+                </div>
               </div>
-              <div className="card mini-card">
-                <div className="mini-title"><LockKeyhole size={17}/>QUYỀN RIÊNG TƯ</div>
-                <p><CheckCircle2 size={16}/>Không cần đăng nhập</p>
-                <p><CheckCircle2 size={16}/>Không upload ảnh lên server trong bản V1</p>
-                <p><CheckCircle2 size={16}/>Không giả lập EXIF thiết bị</p>
-                <p><CheckCircle2 size={16}/>Không có database ảnh</p>
+
+              <div className="optionSelected">
+                <div className="optionIcon">✦</div>
+
+                <div>
+                  <strong>Natural Photo</strong>
+                  <p>
+                    Giảm cảm giác quá sắc, quá bóng và giữ màu ảnh
+                    tự nhiên.
+                  </p>
+                </div>
+
+                <div className="checkCircle">✓</div>
               </div>
             </div>
 
-            <div className="actions">
-              {resultUrl && <a className="download" href={resultUrl} download={`photoflow-${file?.name?.replace(/\.[^.]+$/, '') || 'image'}.jpg`}><Download size={18}/>Tải ảnh đã xử lý (.jpg)</a>}
-              <button className="secondary" onClick={reset}><RotateCcw size={17}/>Làm ảnh khác</button>
+            {/* SCALE */}
+            <div className="panel">
+              <div className="panelTitle">
+                <span className="step">2</span>
+
+                <div>
+                  <h3>Làm nét ảnh</h3>
+                  <p>Chọn độ phân giải đầu ra</p>
+                </div>
+              </div>
+
+              <div className="scaleGrid">
+                {[1, 2, 4].map(value => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setScale(value)}
+                    className={
+                      scale === value ? 'scaleCard active' : 'scaleCard'
+                    }
+                  >
+                    <strong>{value}×</strong>
+
+                    <span>
+                      {value === 1
+                        ? 'Giữ nguyên'
+                        : value === 2
+                          ? 'Rõ nét'
+                          : 'Siêu nét'}
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
+
+            {/* PRESET */}
+            <div className="panel">
+              <div className="panelTitle">
+                <span className="step">3</span>
+
+                <div>
+                  <h3>Preset mạng xã hội</h3>
+                  <p>Tự động resize ảnh</p>
+                </div>
+              </div>
+
+              <select
+                className="select"
+                value={preset}
+                onChange={e => setPreset(e.target.value)}
+              >
+                <option value="original">Giữ nguyên tỷ lệ</option>
+
+                <option value="facebookPortrait">
+                  Facebook Post · 1080×1350
+                </option>
+
+                <option value="facebookSquare">
+                  Facebook Ads · 1080×1080
+                </option>
+
+                <option value="story">
+                  Story / TikTok · 1080×1920
+                </option>
+
+                <option value="landscape">
+                  Facebook Landscape · 1200×628
+                </option>
+              />
+
+              <div className="qualityRow">
+                <div>
+                  <strong>Chất lượng JPEG</strong>
+                  <span>{quality}%</span>
+                </div>
+
+                <input
+                  type="range"
+                  min="70"
+                  max="100"
+                  value={quality}
+                  onChange={e => setQuality(Number(e.target.value))}
+                />
+              </div>
+            </div>
+
+            <button
+              className="processButton"
+              onClick={processImage}
+              disabled={!file || processing}
+            >
+              {processing ? (
+                <>
+                  <span className="spinner" />
+                  Đang xử lý...
+                </>
+              ) : (
+                <>
+                  <span>✦</span>
+                  Khởi chạy xử lý ảnh
+                </>
+              )}
+            </button>
+
+            <div className="localNotice">
+              🔒 Không upload ảnh lên server trong bản V1
+            </div>
+          </aside>
+
+          {/* RIGHT */}
+          <section className="resultArea">
+
+            <div className="statusCard">
+              <div>
+                <span className="eyebrow">TRẠNG THÁI XỬ LÝ</span>
+
+                <h2>
+                  {output
+                    ? 'Ảnh đã được xử lý'
+                    : file
+                      ? 'Ảnh sẵn sàng để tối ưu'
+                      : 'Chưa có hình ảnh'}
+                </h2>
+
+                <p>
+                  {output
+                    ? 'Bạn có thể kéo thanh so sánh để xem sự khác biệt.'
+                    : 'Upload một hình ảnh để bắt đầu.'}
+                </p>
+              </div>
+
+              <div className={`statusPill ${output ? 'done' : ''}`}>
+                <span />
+                {output ? 'Hoàn tất' : 'Chờ ảnh'}
+              </div>
+            </div>
+
+            {/* PREVIEW */}
+            <div className="previewCard">
+              {!src ? (
+                <div className="emptyPreview">
+                  <div className="emptyIcon">▧</div>
+
+                  <h3>Ảnh xem trước sẽ hiển thị tại đây</h3>
+
+                  <p>
+                    Upload một ảnh JPG, PNG hoặc WebP để bắt đầu.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="previewHeader">
+                    <span className="beforeLabel">
+                      GỐC
+                    </span>
+
+                    <span className="afterLabel">
+                      {output ? 'ĐÃ XỬ LÝ' : 'PREVIEW'}
+                    </span>
+                  </div>
+
+                  <div
+                    className="comparison"
+                    style={{ '--position': `${slider}%` }}
+                  >
+                    <img
+                      className="imageAfter"
+                      src={output || src}
+                      alt="Processed"
+                    />
+
+                    {output && (
+                      <>
+                        <div className="beforeLayer">
+                          <img src={src} alt="Original" />
+                        </div>
+
+                        <div className="divider">
+                          <div className="sliderHandle">
+                            ‹ ›
+                          </div>
+                        </div>
+
+                        <input
+                          className="comparisonRange"
+                          type="range"
+                          min="0"
+                          max="100"
+                          value={slider}
+                          onChange={e => setSlider(e.target.value)}
+                        />
+                      </>
+                    )}
+                  </div>
+
+                  {output && (
+                    <div className="previewHint">
+                      ↔ Kéo thanh trượt để so sánh trước và sau
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="infoGrid">
+
+              <div className="infoCard">
+                <div className="infoTitle">
+                  <span>✦</span>
+                  Tối ưu ảnh
+                </div>
+
+                <ul>
+                  <li>Upscale trực tiếp bằng Canvas</li>
+                  <li>Natural Photo nhẹ</li>
+                  <li>Crop theo Social Preset</li>
+                  <li>Điều chỉnh JPEG quality</li>
+                </ul>
+              </div>
+
+              <div className="infoCard">
+                <div className="infoTitle">
+                  <span>🔒</span>
+                  Quyền riêng tư
+                </div>
+
+                <ul>
+                  <li>Không cần đăng nhập</li>
+                  <li>Không lưu ảnh trên database</li>
+                  <li>Không upload ảnh trong V1</li>
+                  <li>Xử lý ngay trên trình duyệt</li>
+                </ul>
+              </div>
+
+            </div>
+
+            {output && (
+              <div className="actions">
+                <a
+                  className="downloadButton"
+                  href={output}
+                  download="photoflow-optimized.jpg"
+                >
+                  ↓ Tải ảnh đã xử lý (.jpg)
+                </a>
+
+                <button className="resetButton" onClick={reset}>
+                  Làm ảnh khác
+                </button>
+              </div>
+            )}
+
           </section>
         </div>
 
-        <footer><span>PhotoFlow • Công cụ dành cho creator & marketer</span><span><LockKeyhole size={14}/>Không lưu trữ ảnh trên hạ tầng ở bản V1</span></footer>
+        <footer className="footer">
+          <div>
+            <strong>PhotoFlow</strong>
+            <span> · Công cụ tối ưu ảnh dành cho creator & marketer</span>
+          </div>
+
+          <div>
+            🔒 Local-first processing
+          </div>
+        </footer>
+
         <canvas ref={canvasRef} hidden />
-      </section>
+      </div>
     </main>
-  );
+  )
 }
