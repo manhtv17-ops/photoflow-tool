@@ -1,29 +1,81 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import pica from 'pica'
+
+const PRESETS = {
+  original: null,
+  fbPortrait: { w: 1080, h: 1350 },
+  fbSquare: { w: 1080, h: 1080 },
+  story: { w: 1080, h: 1920 },
+  landscape: { w: 1200, h: 628 },
+}
 
 export default function Home() {
   const inputRef = useRef(null)
-  const canvasRef = useRef(null)
 
   const [file, setFile] = useState(null)
-  const [src, setSrc] = useState('')
-  const [output, setOutput] = useState('')
+  const [originalUrl, setOriginalUrl] = useState('')
+  const [outputUrl, setOutputUrl] = useState('')
+
   const [scale, setScale] = useState(2)
-  const [quality, setQuality] = useState(92)
   const [preset, setPreset] = useState('original')
+  const [quality, setQuality] = useState(92)
+
   const [slider, setSlider] = useState(50)
-  const [processing, setProcessing] = useState(false)
 
-  function handleFile(f) {
-    if (!f || !f.type.startsWith('image/')) return
+  const [status, setStatus] = useState('idle')
+  const [progress, setProgress] = useState(0)
+  const [statusText, setStatusText] = useState('Chờ hình ảnh')
 
-    if (src) URL.revokeObjectURL(src)
-    if (output) URL.revokeObjectURL(output)
+  const [originalInfo, setOriginalInfo] = useState(null)
+  const [outputInfo, setOutputInfo] = useState(null)
 
-    setFile(f)
-    setSrc(URL.createObjectURL(f))
-    setOutput('')
+  useEffect(() => {
+    return () => {
+      if (originalUrl) URL.revokeObjectURL(originalUrl)
+      if (outputUrl) URL.revokeObjectURL(outputUrl)
+    }
+  }, [originalUrl, outputUrl])
+
+  async function handleFile(selectedFile) {
+    if (!selectedFile) return
+
+    if (!selectedFile.type.startsWith('image/')) {
+      alert('Vui lòng chọn file hình ảnh.')
+      return
+    }
+
+    if (selectedFile.size > 20 * 1024 * 1024) {
+      alert('Ảnh tối đa 20MB.')
+      return
+    }
+
+    if (originalUrl) URL.revokeObjectURL(originalUrl)
+    if (outputUrl) URL.revokeObjectURL(outputUrl)
+
+    const url = URL.createObjectURL(selectedFile)
+
+    const img = new Image()
+    img.src = url
+    await img.decode()
+
+    setFile(selectedFile)
+    setOriginalUrl(url)
+    setOutputUrl('')
+
+    setOriginalInfo({
+      width: img.naturalWidth,
+      height: img.naturalHeight,
+      size: selectedFile.size,
+      type: selectedFile.type,
+    })
+
+    setOutputInfo(null)
+
+    setStatus('ready')
+    setProgress(0)
+    setStatusText('Ảnh sẵn sàng xử lý')
   }
 
   function handleDrop(e) {
@@ -31,298 +83,697 @@ export default function Home() {
     handleFile(e.dataTransfer.files?.[0])
   }
 
-  async function processImage() {
-    if (!src) return
+  async function imageToCanvas(img) {
+    const canvas = document.createElement('canvas')
 
-    setProcessing(true)
+    canvas.width = img.naturalWidth
+    canvas.height = img.naturalHeight
+
+    const ctx = canvas.getContext('2d', {
+      alpha: false,
+      willReadFrequently: true,
+    })
+
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+    ctx.drawImage(img, 0, 0)
+
+    return canvas
+  }
+
+  function applyNaturalPhoto(canvas) {
+    const ctx = canvas.getContext('2d', {
+      willReadFrequently: true,
+    })
+
+    const imageData = ctx.getImageData(
+      0,
+      0,
+      canvas.width,
+      canvas.height
+    )
+
+    const d = imageData.data
+
+    for (let i = 0; i < d.length; i += 4) {
+      let r = d[i]
+      let g = d[i + 1]
+      let b = d[i + 2]
+
+      const avg = (r + g + b) / 3
+
+      // Saturation nhẹ hơn
+      const sat = 0.965
+
+      r = avg + (r - avg) * sat
+      g = avg + (g - avg) * sat
+      b = avg + (b - avg) * sat
+
+      // Soft contrast
+      const contrast = 1.025
+
+      r = (r - 128) * contrast + 128
+      g = (g - 128) * contrast + 128
+      b = (b - 128) * contrast + 128
+
+      // Highlight roll-off nhẹ
+      if (r > 220) r = 220 + (r - 220) * 0.7
+      if (g > 220) g = 220 + (g - 220) * 0.7
+      if (b > 220) b = 220 + (b - 220) * 0.7
+
+      d[i] = Math.max(0, Math.min(255, r))
+      d[i + 1] = Math.max(0, Math.min(255, g))
+      d[i + 2] = Math.max(0, Math.min(255, b))
+    }
+
+    ctx.putImageData(imageData, 0, 0)
+
+    return canvas
+  }
+
+  async function resizeWithPica(sourceCanvas, width, height) {
+    const output = document.createElement('canvas')
+
+    output.width = width
+    output.height = height
+
+    const resizer = pica()
+
+    await resizer.resize(sourceCanvas, output, {
+      filter: 'mks2013',
+      unsharpAmount: 120,
+      unsharpRadius: 0.6,
+      unsharpThreshold: 2,
+    })
+
+    return output
+  }
+
+  async function cropToPreset(sourceCanvas, targetW, targetH) {
+    const sourceRatio =
+      sourceCanvas.width / sourceCanvas.height
+
+    const targetRatio = targetW / targetH
+
+    let cropW = sourceCanvas.width
+    let cropH = sourceCanvas.height
+
+    let sx = 0
+    let sy = 0
+
+    if (sourceRatio > targetRatio) {
+      cropW = sourceCanvas.height * targetRatio
+      sx = (sourceCanvas.width - cropW) / 2
+    } else {
+      cropH = sourceCanvas.width / targetRatio
+      sy = (sourceCanvas.height - cropH) / 2
+    }
+
+    const cropCanvas = document.createElement('canvas')
+
+    cropCanvas.width = cropW
+    cropCanvas.height = cropH
+
+    const cropCtx = cropCanvas.getContext('2d')
+
+    cropCtx.drawImage(
+      sourceCanvas,
+      sx,
+      sy,
+      cropW,
+      cropH,
+      0,
+      0,
+      cropW,
+      cropH
+    )
+
+    return resizeWithPica(
+      cropCanvas,
+      targetW,
+      targetH
+    )
+  }
+
+  async function aiUpscale(imageElement, factor) {
+    if (factor === 1) {
+      return imageToCanvas(imageElement)
+    }
+
+    setStatusText('Đang tải AI Super Resolution...')
+    setProgress(15)
+
+    const UpscalerModule = await import('upscaler')
+    const Upscaler = UpscalerModule.default
+
+    let model
+
+    if (factor === 2) {
+      model = (
+        await import('@upscalerjs/esrgan-slim/2x')
+      ).default
+    } else {
+      model = (
+        await import('@upscalerjs/esrgan-slim/4x')
+      ).default
+    }
+
+    const upscaler = new Upscaler({
+      model,
+    })
+
+    setStatusText(
+      factor === 2
+        ? 'AI đang upscale ảnh 2×...'
+        : 'AI đang upscale ảnh 4×...'
+    )
+
+    setProgress(30)
+
+    const result = await upscaler.upscale(
+      imageElement,
+      {
+        output: 'base64',
+        patchSize: 64,
+        padding: 2,
+
+        progress: percent => {
+          const p =
+            30 +
+            Math.round(
+              Number(percent || 0) * 45
+            )
+
+          setProgress(
+            Math.min(75, p)
+          )
+        },
+      }
+    )
+
+    const resultImage = new Image()
+
+    resultImage.src = result
+
+    await resultImage.decode()
+
+    const canvas =
+      await imageToCanvas(resultImage)
 
     try {
+      upscaler.dispose()
+    } catch {}
+
+    return canvas
+  }
+
+  async function processImage() {
+    if (!originalUrl) return
+
+    setStatus('processing')
+    setOutputUrl('')
+    setOutputInfo(null)
+
+    try {
+      setProgress(5)
+      setStatusText('Đang đọc ảnh...')
+
       const img = new Image()
-      img.src = src
+
+      img.src = originalUrl
+
       await img.decode()
 
-      let targetWidth = img.naturalWidth * scale
-      let targetHeight = img.naturalHeight * scale
+      let workingCanvas
 
-      const presets = {
-        facebookPortrait: [1080, 1350],
-        facebookSquare: [1080, 1080],
-        story: [1080, 1920],
-        landscape: [1200, 628],
+      try {
+        workingCanvas =
+          await aiUpscale(img, scale)
+      } catch (err) {
+        console.warn(
+          'AI upscale lỗi, fallback Pica:',
+          err
+        )
+
+        setStatusText(
+          'AI không khả dụng, đang dùng bộ upscale chất lượng cao...'
+        )
+
+        setProgress(45)
+
+        const base =
+          await imageToCanvas(img)
+
+        workingCanvas =
+          await resizeWithPica(
+            base,
+            img.naturalWidth * scale,
+            img.naturalHeight * scale
+          )
       }
 
-      if (preset !== 'original') {
-        const [w, h] = presets[preset]
-        targetWidth = w
-        targetHeight = h
-      }
-
-      const canvas = canvasRef.current
-      const ctx = canvas.getContext('2d', { alpha: false })
-
-      canvas.width = targetWidth
-      canvas.height = targetHeight
-
-      ctx.fillStyle = '#ffffff'
-      ctx.fillRect(0, 0, targetWidth, targetHeight)
-
-      ctx.imageSmoothingEnabled = true
-      ctx.imageSmoothingQuality = 'high'
-
-      ctx.filter = 'contrast(1.035) saturate(0.98) brightness(1.01)'
-
-      const sourceRatio = img.naturalWidth / img.naturalHeight
-      const targetRatio = targetWidth / targetHeight
-
-      let drawWidth = targetWidth
-      let drawHeight = targetHeight
-      let dx = 0
-      let dy = 0
-
-      if (preset !== 'original') {
-        if (sourceRatio > targetRatio) {
-          drawHeight = targetHeight
-          drawWidth = drawHeight * sourceRatio
-          dx = (targetWidth - drawWidth) / 2
-        } else {
-          drawWidth = targetWidth
-          drawHeight = drawWidth / sourceRatio
-          dy = (targetHeight - drawHeight) / 2
-        }
-      }
-
-      ctx.drawImage(img, dx, dy, drawWidth, drawHeight)
-
-      canvas.toBlob(
-        blob => {
-          if (!blob) return
-
-          if (output) URL.revokeObjectURL(output)
-
-          setOutput(URL.createObjectURL(blob))
-          setSlider(50)
-          setProcessing(false)
-        },
-        'image/jpeg',
-        quality / 100
+      setStatusText(
+        'Đang cân màu Natural Photo...'
       )
-    } catch (error) {
-      console.error(error)
-      setProcessing(false)
+
+      setProgress(80)
+
+      workingCanvas =
+        applyNaturalPhoto(
+          workingCanvas
+        )
+
+      if (preset !== 'original') {
+        setStatusText(
+          'Đang áp dụng Social Preset...'
+        )
+
+        setProgress(87)
+
+        const p = PRESETS[preset]
+
+        workingCanvas =
+          await cropToPreset(
+            workingCanvas,
+            p.w,
+            p.h
+          )
+      }
+
+      setStatusText(
+        'Đang tối ưu file JPEG...'
+      )
+
+      setProgress(94)
+
+      const resizer = pica()
+
+      const blob =
+        await resizer.toBlob(
+          workingCanvas,
+          'image/jpeg',
+          quality / 100
+        )
+
+      if (outputUrl) {
+        URL.revokeObjectURL(outputUrl)
+      }
+
+      const newUrl =
+        URL.createObjectURL(blob)
+
+      setOutputUrl(newUrl)
+
+      setOutputInfo({
+        width: workingCanvas.width,
+        height: workingCanvas.height,
+        size: blob.size,
+      })
+
+      setProgress(100)
+      setStatus('done')
+      setStatusText(
+        'Ảnh đã xử lý hoàn tất'
+      )
+
+      setSlider(50)
+    } catch (err) {
+      console.error(err)
+
+      setStatus('error')
+      setProgress(0)
+
+      setStatusText(
+        'Không xử lý được ảnh này. Hãy thử ảnh nhỏ hơn.'
+      )
     }
   }
 
   function reset() {
-    if (src) URL.revokeObjectURL(src)
-    if (output) URL.revokeObjectURL(output)
+    if (originalUrl) {
+      URL.revokeObjectURL(originalUrl)
+    }
+
+    if (outputUrl) {
+      URL.revokeObjectURL(outputUrl)
+    }
 
     setFile(null)
-    setSrc('')
-    setOutput('')
-    setScale(2)
-    setPreset('original')
-    setSlider(50)
+    setOriginalUrl('')
+    setOutputUrl('')
+    setOriginalInfo(null)
+    setOutputInfo(null)
 
-    if (inputRef.current) inputRef.current.value = ''
+    setStatus('idle')
+    setStatusText('Chờ hình ảnh')
+    setProgress(0)
+
+    if (inputRef.current) {
+      inputRef.current.value = ''
+    }
+  }
+
+  function formatSize(bytes) {
+    if (!bytes) return '—'
+
+    if (bytes < 1024 * 1024) {
+      return `${(bytes / 1024).toFixed(0)} KB`
+    }
+
+    return `${(
+      bytes /
+      1024 /
+      1024
+    ).toFixed(2)} MB`
   }
 
   return (
     <main className="page">
+
       <div className="appShell">
 
-        {/* HEADER */}
         <header className="topbar">
+
           <div className="brand">
-            <div className="brandIcon">P</div>
+
+            <div className="brandIcon">
+              P
+            </div>
 
             <div>
-              <div className="brandName">PhotoFlow</div>
-              <div className="brandSub">
-                Image Optimizer
-              </div>
+              <strong>
+                PhotoFlow
+              </strong>
+
+              <small>
+                AI Image Optimizer
+              </small>
             </div>
+
           </div>
 
           <div className="headline">
-            <h1>Làm nét & tối ưu hình ảnh</h1>
+
+            <h1>
+              Làm nét & tối ưu hình ảnh
+            </h1>
 
             <p>
-              Upscale · Natural Photo · Social Preset · xử lý trực tiếp
-              trên trình duyệt
+              AI Super Resolution • Natural Photo • Social Preset
             </p>
+
           </div>
 
           <div className="privacyBadge">
-            <span className="shield">✓</span>
+
+            <div className="shield">
+              ✓
+            </div>
 
             <div>
-              <strong>Ưu tiên quyền riêng tư</strong>
-              <small>Xử lý cục bộ trên thiết bị</small>
+
+              <strong>
+                Xử lý cục bộ
+              </strong>
+
+              <small>
+                Không lưu ảnh
+              </small>
+
             </div>
+
           </div>
+
         </header>
 
-        {/* BODY */}
+
         <div className="workspace">
 
-          {/* LEFT */}
           <aside className="sidebar">
 
-            {/* UPLOAD */}
             <div
-              className={`uploadBox ${file ? 'hasFile' : ''}`}
-              onClick={() => inputRef.current?.click()}
+              className="uploadBox"
+              onClick={() =>
+                inputRef.current?.click()
+              }
               onDrop={handleDrop}
-              onDragOver={e => e.preventDefault()}
+              onDragOver={e =>
+                e.preventDefault()
+              }
             >
+
               <input
                 ref={inputRef}
+                hidden
                 type="file"
                 accept="image/jpeg,image/png,image/webp"
-                hidden
-                onChange={e => handleFile(e.target.files?.[0])}
+                onChange={e =>
+                  handleFile(
+                    e.target.files?.[0]
+                  )
+                }
               />
 
               {!file ? (
                 <>
-                  <div className="uploadIcon">↑</div>
 
-                  <strong>
-                    Kéo thả ảnh hoặc <span>Chạm để tải</span>
-                  </strong>
+                  <div className="uploadIcon">
+                    ↑
+                  </div>
 
-                  <p>Hỗ trợ JPG, JPEG, PNG, WEBP</p>
+                  <h3>
+                    Kéo thả ảnh hoặc{' '}
+                    <span>
+                      Chạm để tải
+                    </span>
+                  </h3>
 
-                  <button type="button" className="chooseButton">
+                  <p>
+                    JPG, JPEG, PNG, WEBP • tối đa 20MB
+                  </p>
+
+                  <button
+                    className="chooseButton"
+                    type="button"
+                  >
                     Chọn hình ảnh
                   </button>
+
                 </>
               ) : (
                 <>
-                  <div className="fileReadyIcon">✓</div>
 
-                  <strong>Ảnh đã sẵn sàng</strong>
-
-                  <div className="fileChip">
-                    <div className="fileThumbnail">
-                      <img src={src} alt="" />
-                    </div>
-
-                    <div className="fileInfo">
-                      <b>{file.name}</b>
-                      <small>
-                        {(file.size / 1024 / 1024).toFixed(2)} MB
-                      </small>
-                    </div>
+                  <div className="successIcon">
+                    ✓
                   </div>
 
-                  <span className="changeFile">
-                    Nhấn để chọn ảnh khác
-                  </span>
+                  <h3>
+                    Ảnh đã sẵn sàng
+                  </h3>
+
+                  <div className="fileCard">
+
+                    <img
+                      src={originalUrl}
+                      alt=""
+                    />
+
+                    <div>
+
+                      <strong>
+                        {file.name}
+                      </strong>
+
+                      <span>
+                        {formatSize(
+                          file.size
+                        )}
+                      </span>
+
+                    </div>
+
+                  </div>
+
+                  <small className="replaceText">
+                    Nhấn để thay ảnh
+                  </small>
+
                 </>
               )}
+
             </div>
 
-            {/* NATURAL */}
-            <div className="panel">
-              <div className="panelTitle">
-                <span className="step">1</span>
+
+            <div className="controlCard">
+
+              <div className="controlHead">
+
+                <span className="number">
+                  1
+                </span>
 
                 <div>
-                  <h3>Chế độ tối ưu</h3>
-                  <p>Cân chỉnh ảnh tự nhiên hơn</p>
+                  <strong>
+                    Chế độ tối ưu
+                  </strong>
+
+                  <small>
+                    Natural Photo
+                  </small>
                 </div>
+
               </div>
 
-              <div className="optionSelected">
-                <div className="optionIcon">✦</div>
+              <div className="selectedMode">
+
+                <span className="spark">
+                  ✦
+                </span>
 
                 <div>
-                  <strong>Natural Photo</strong>
+
+                  <strong>
+                    Natural Photo
+                  </strong>
+
                   <p>
-                    Giảm cảm giác quá sắc, quá bóng và giữ màu ảnh
-                    tự nhiên.
+                    Cân màu, giảm highlight gắt và giữ cảm giác tự nhiên.
                   </p>
+
                 </div>
 
-                <div className="checkCircle">✓</div>
+                <span className="modeCheck">
+                  ✓
+                </span>
+
               </div>
+
             </div>
 
-            {/* SCALE */}
-            <div className="panel">
-              <div className="panelTitle">
-                <span className="step">2</span>
+
+            <div className="controlCard">
+
+              <div className="controlHead">
+
+                <span className="number">
+                  2
+                </span>
 
                 <div>
-                  <h3>Làm nét ảnh</h3>
-                  <p>Chọn độ phân giải đầu ra</p>
+
+                  <strong>
+                    AI Upscale
+                  </strong>
+
+                  <small>
+                    ESRGAN Super Resolution
+                  </small>
+
                 </div>
+
               </div>
 
               <div className="scaleGrid">
-                {[1, 2, 4].map(value => (
+
+                {[1, 2, 4].map(x => (
+
                   <button
-                    key={value}
-                    type="button"
-                    onClick={() => setScale(value)}
+                    key={x}
+                    onClick={() =>
+                      setScale(x)
+                    }
                     className={
-                      scale === value ? 'scaleCard active' : 'scaleCard'
+                      scale === x
+                        ? 'scale active'
+                        : 'scale'
                     }
                   >
-                    <strong>{value}×</strong>
+
+                    <strong>
+                      {x}×
+                    </strong>
 
                     <span>
-                      {value === 1
-                        ? 'Giữ nguyên'
-                        : value === 2
-                          ? 'Rõ nét'
-                          : 'Siêu nét'}
+                      {x === 1
+                        ? 'Gốc'
+                        : x === 2
+                        ? 'Rõ nét'
+                        : 'Siêu nét'}
                     </span>
+
                   </button>
+
                 ))}
+
               </div>
+
             </div>
 
-            {/* PRESET */}
-            <div className="panel">
-              <div className="panelTitle">
-                <span className="step">3</span>
+
+            <div className="controlCard">
+
+              <div className="controlHead">
+
+                <span className="number">
+                  3
+                </span>
 
                 <div>
-                  <h3>Preset mạng xã hội</h3>
-                  <p>Tự động resize ảnh</p>
+                  <strong>
+                    Social Preset
+                  </strong>
+
+                  <small>
+                    Resize & crop tự động
+                  </small>
                 </div>
+
               </div>
 
               <select
-                className="select"
                 value={preset}
-                onChange={e => setPreset(e.target.value)}
+                onChange={e =>
+                  setPreset(
+                    e.target.value
+                  )
+                }
               >
-                <option value="original">Giữ nguyên tỷ lệ</option>
 
-                <option value="facebookPortrait">
+                <option value="original">
+                  Giữ nguyên
+                </option>
+
+                <option value="fbPortrait">
                   Facebook Post · 1080×1350
                 </option>
 
-                <option value="facebookSquare">
+                <option value="fbSquare">
                   Facebook Ads · 1080×1080
                 </option>
 
                 <option value="story">
-                  Story / TikTok · 1080×1920
+                  TikTok / Story · 1080×1920
                 </option>
 
                 <option value="landscape">
-                  Facebook Landscape · 1200×628
+                  Landscape · 1200×628
                 </option>
-              />
 
-              <div className="qualityRow">
+              </select>
+
+              <div className="quality">
+
                 <div>
-                  <strong>Chất lượng JPEG</strong>
-                  <span>{quality}%</span>
+
+                  <span>
+                    Chất lượng JPEG
+                  </span>
+
+                  <b>
+                    {quality}%
+                  </b>
+
                 </div>
 
                 <input
@@ -330,193 +781,318 @@ export default function Home() {
                   min="70"
                   max="100"
                   value={quality}
-                  onChange={e => setQuality(Number(e.target.value))}
+                  onChange={e =>
+                    setQuality(
+                      Number(
+                        e.target.value
+                      )
+                    )
+                  }
                 />
+
               </div>
+
             </div>
+
 
             <button
               className="processButton"
               onClick={processImage}
-              disabled={!file || processing}
+              disabled={
+                !file ||
+                status === 'processing'
+              }
             >
-              {processing ? (
-                <>
-                  <span className="spinner" />
-                  Đang xử lý...
-                </>
-              ) : (
-                <>
-                  <span>✦</span>
-                  Khởi chạy xử lý ảnh
-                </>
-              )}
+
+              {status ===
+              'processing'
+                ? 'Đang xử lý...'
+                : '✦  Khởi chạy xử lý ảnh'}
+
             </button>
 
-            <div className="localNotice">
-              🔒 Không upload ảnh lên server trong bản V1
+            <div className="privacyNote">
+              🔒 Ảnh được xử lý trên trình duyệt
             </div>
+
           </aside>
 
-          {/* RIGHT */}
-          <section className="resultArea">
+
+          <section className="content">
 
             <div className="statusCard">
+
               <div>
-                <span className="eyebrow">TRẠNG THÁI XỬ LÝ</span>
+
+                <label>
+                  TRẠNG THÁI XỬ LÝ
+                </label>
 
                 <h2>
-                  {output
-                    ? 'Ảnh đã được xử lý'
-                    : file
-                      ? 'Ảnh sẵn sàng để tối ưu'
-                      : 'Chưa có hình ảnh'}
+                  {statusText}
                 </h2>
 
                 <p>
-                  {output
-                    ? 'Bạn có thể kéo thanh so sánh để xem sự khác biệt.'
-                    : 'Upload một hình ảnh để bắt đầu.'}
+                  {status ===
+                  'processing'
+                    ? `Tiến trình ${progress}%`
+                    : 'AI Super Resolution + Natural Photo'}
                 </p>
+
               </div>
 
-              <div className={`statusPill ${output ? 'done' : ''}`}>
-                <span />
-                {output ? 'Hoàn tất' : 'Chờ ảnh'}
-              </div>
+              <span
+                className={`state ${status}`}
+              >
+                {status === 'done'
+                  ? '✓ Hoàn tất'
+                  : status ===
+                    'processing'
+                  ? `${progress}%`
+                  : status ===
+                    'error'
+                  ? 'Có lỗi'
+                  : 'Sẵn sàng'}
+              </span>
+
+              {status ===
+                'processing' && (
+                <div className="progress">
+
+                  <div
+                    style={{
+                      width:
+                        progress +
+                        '%',
+                    }}
+                  />
+
+                </div>
+              )}
+
             </div>
 
-            {/* PREVIEW */}
-            <div className="previewCard">
-              {!src ? (
-                <div className="emptyPreview">
-                  <div className="emptyIcon">▧</div>
 
-                  <h3>Ảnh xem trước sẽ hiển thị tại đây</h3>
+            <div className="previewCard">
+
+              {!originalUrl ? (
+
+                <div className="empty">
+
+                  <div className="emptyIcon">
+                    ▧
+                  </div>
+
+                  <h3>
+                    Ảnh xem trước sẽ hiển thị tại đây
+                  </h3>
 
                   <p>
-                    Upload một ảnh JPG, PNG hoặc WebP để bắt đầu.
+                    Upload ảnh để bắt đầu xử lý.
                   </p>
+
                 </div>
+
               ) : (
+
                 <>
-                  <div className="previewHeader">
-                    <span className="beforeLabel">
+
+                  <div className="previewLabels">
+
+                    <span className="originalLabel">
                       GỐC
                     </span>
 
-                    <span className="afterLabel">
-                      {output ? 'ĐÃ XỬ LÝ' : 'PREVIEW'}
+                    <span className="resultLabel">
+                      {outputUrl
+                        ? 'ĐÃ XỬ LÝ'
+                        : 'PREVIEW'}
                     </span>
+
                   </div>
 
                   <div
                     className="comparison"
-                    style={{ '--position': `${slider}%` }}
+                    style={{
+                      '--position':
+                        slider +
+                        '%',
+                    }}
                   >
+
                     <img
-                      className="imageAfter"
-                      src={output || src}
-                      alt="Processed"
+                      src={
+                        outputUrl ||
+                        originalUrl
+                      }
+                      alt=""
                     />
 
-                    {output && (
+                    {outputUrl && (
                       <>
-                        <div className="beforeLayer">
-                          <img src={src} alt="Original" />
+
+                        <div className="before">
+
+                          <img
+                            src={
+                              originalUrl
+                            }
+                            alt=""
+                          />
+
                         </div>
 
                         <div className="divider">
-                          <div className="sliderHandle">
+
+                          <span>
                             ‹ ›
-                          </div>
+                          </span>
+
                         </div>
 
                         <input
-                          className="comparisonRange"
                           type="range"
                           min="0"
                           max="100"
-                          value={slider}
-                          onChange={e => setSlider(e.target.value)}
+                          value={
+                            slider
+                          }
+                          onChange={
+                            e =>
+                              setSlider(
+                                e
+                                  .target
+                                  .value
+                              )
+                          }
                         />
+
                       </>
                     )}
+
                   </div>
 
-                  {output && (
-                    <div className="previewHint">
-                      ↔ Kéo thanh trượt để so sánh trước và sau
-                    </div>
-                  )}
                 </>
               )}
-            </div>
-
-            <div className="infoGrid">
-
-              <div className="infoCard">
-                <div className="infoTitle">
-                  <span>✦</span>
-                  Tối ưu ảnh
-                </div>
-
-                <ul>
-                  <li>Upscale trực tiếp bằng Canvas</li>
-                  <li>Natural Photo nhẹ</li>
-                  <li>Crop theo Social Preset</li>
-                  <li>Điều chỉnh JPEG quality</li>
-                </ul>
-              </div>
-
-              <div className="infoCard">
-                <div className="infoTitle">
-                  <span>🔒</span>
-                  Quyền riêng tư
-                </div>
-
-                <ul>
-                  <li>Không cần đăng nhập</li>
-                  <li>Không lưu ảnh trên database</li>
-                  <li>Không upload ảnh trong V1</li>
-                  <li>Xử lý ngay trên trình duyệt</li>
-                </ul>
-              </div>
 
             </div>
 
-            {output && (
+
+            <div className="stats">
+
+              <div className="statCard">
+
+                <label>
+                  ẢNH GỐC
+                </label>
+
+                <strong>
+                  {originalInfo
+                    ? `${originalInfo.width} × ${originalInfo.height}`
+                    : '—'}
+                </strong>
+
+                <span>
+                  {originalInfo
+                    ? formatSize(
+                        originalInfo.size
+                      )
+                    : 'Chưa có ảnh'}
+                </span>
+
+              </div>
+
+
+              <div className="statCard">
+
+                <label>
+                  ẢNH SAU XỬ LÝ
+                </label>
+
+                <strong>
+                  {outputInfo
+                    ? `${outputInfo.width} × ${outputInfo.height}`
+                    : '—'}
+                </strong>
+
+                <span>
+                  {outputInfo
+                    ? formatSize(
+                        outputInfo.size
+                      )
+                    : 'Chưa xử lý'}
+                </span>
+
+              </div>
+
+
+              <div className="statCard">
+
+                <label>
+                  ENGINE
+                </label>
+
+                <strong>
+                  {scale === 1
+                    ? 'Pica'
+                    : 'ESRGAN'}
+                </strong>
+
+                <span>
+                  Browser processing
+                </span>
+
+              </div>
+
+            </div>
+
+
+            {outputUrl && (
+
               <div className="actions">
+
                 <a
-                  className="downloadButton"
-                  href={output}
+                  href={outputUrl}
                   download="photoflow-optimized.jpg"
+                  className="download"
                 >
                   ↓ Tải ảnh đã xử lý (.jpg)
                 </a>
 
-                <button className="resetButton" onClick={reset}>
+                <button
+                  onClick={reset}
+                  className="reset"
+                >
                   Làm ảnh khác
                 </button>
+
               </div>
+
             )}
 
           </section>
+
         </div>
 
-        <footer className="footer">
-          <div>
-            <strong>PhotoFlow</strong>
-            <span> · Công cụ tối ưu ảnh dành cho creator & marketer</span>
-          </div>
 
-          <div>
-            🔒 Local-first processing
-          </div>
+        <footer>
+
+          <span>
+            <b>
+              PhotoFlow
+            </b>
+            {' '}
+            · AI Image Optimizer
+          </span>
+
+          <span>
+            🔒 Local-first
+          </span>
+
         </footer>
 
-        <canvas ref={canvasRef} hidden />
       </div>
+
     </main>
   )
 }
